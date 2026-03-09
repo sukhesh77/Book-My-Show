@@ -1,0 +1,40 @@
+pipeline {
+    agent any
+
+    stages {
+
+        stage('Checkout Code') {
+            steps {
+                git branch: 'main', url: 'https://github.com/sukhesh77/Book-My-Show.git'
+                sh 'ls -la'
+            }
+        }
+
+        stage('Docker Build & Push') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+
+                        sh 'docker build -t bookmyshow-app:v1.0.0 bookmyshow-app'
+
+                        sh 'docker tag bookmyshow-app:v1.0.0 sukhesh77/bookmyshow-app:v1.0.0'
+
+                        sh 'docker push sukhesh77/bookmyshow-app:v1.0.0'
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Container') {
+            steps {
+                sh '''
+                docker stop bookmyshow || true
+                docker rm bookmyshow || true
+
+                docker run -d --name bookmyshow -p 3000:3000 sukhesh77/bookmyshow-app:v1.0.0
+                '''
+            }
+        }
+    }
+}
+

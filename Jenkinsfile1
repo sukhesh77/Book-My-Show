@@ -1,112 +1,86 @@
-(without K8S Stage)
 pipeline {
     agent any
+
     tools {
-        jdk 'jdk17'
-        nodejs 'node23'
+        nodejs 'nodejs'
     }
-    environment {
-        SCANNER_HOME = tool 'sonar-scanner'
-    }
+
     stages {
+
         stage('Clean Workspace') {
             steps {
                 cleanWs()
             }
         }
-        stage('Checkout from Git') {
+
+        stage('Checkout Code') {
             steps {
-                git branch: 'main', url: 'https://github.com/akshu20791/Book-My-Show.git'
-                sh 'ls -la'  // Verify files after checkout
+                git branch: 'feature-devops', url: 'https://github.com/sukhesh77/Book-My-Show.git'
             }
         }
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('sonar-server') {
-                    sh ''' 
-                    $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=BMS \
-                    -Dsonar.projectKey=BMS 
-                    '''
-                }
-            }
-        }
-        stage('Quality Gate') {
-            steps {
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
-                }
-            }
-        }
+
         stage('Install Dependencies') {
             steps {
-                sh '''
-                cd bookmyshow-app
-                ls -la  # Verify package.json exists
-                if [ -f package.json ]; then
-                    rm -rf node_modules package-lock.json  # Remove old dependencies
-                    npm install  # Install fresh dependencies
-                else
-                    echo "Error: package.json not found in bookmyshow-app!"
-                    exit 1
-                fi
-                '''
+                dir('bookmyshow-app') {
+                    sh 'npm install'
+                }
             }
         }
-        stage('OWASP FS Scan') {
-            steps {
-                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
-                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-            }
-        }
-        stage('Trivy FS Scan') {
-            steps {
-                sh 'trivy fs . > trivyfs.txt'
-            }
-        }
-        stage('Docker Build & Push') {
-            steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
-                        sh ''' 
-                        echo "Building Docker image..."
-                        docker build --no-cache -t kastrov/bms:latest -f bookmyshow-app/Dockerfile bookmyshow-app
 
-                        echo "Pushing Docker image to registry..."
-                        docker push kastrov/bms:latest
-                        '''
+        stage('SonarQube Analysis') {
+            steps {
+                dir('bookmyshow-app') {
+                    withSonarQubeEnv('sonar-server') {
+                        sh """
+                        ${tool 'sonar-scanner'}/bin/sonar-scanner \
+                        -Dsonar.projectKey=BMS-app \
+                        -Dsonar.sources=. \
+                        -Dsonar.exclusions=node_modules/**
+                        """
                     }
                 }
             }
         }
-        stage('Deploy to Container') {
+
+        stage('Build Docker Image') {
             steps {
-                sh ''' 
-                echo "Stopping and removing old container..."
-                docker stop bms || true
-                docker rm bms || true
+                dir('bookmyshow-app') {
+                    sh 'docker build -t sukhesh77/bookmyshow-app:v1.0.0 .'
+                }
+            }
+        }
 
-                echo "Running new container on port 3000..."
-                docker run -d --restart=always --name bms -p 3000:3000 kastrov/bms:latest
-
-                echo "Checking running containers..."
-                docker ps -a
-
-                echo "Fetching logs..."
-                sleep 5  # Give time for the app to start
-                docker logs bms
+        stage('Run Docker Container') {
+            steps {
+                sh '''
+                docker rm -f bookmyshow-container || true
+                docker run -d -p 3000:3000 --name bookmyshow-container sukhesh77/bookmyshow-app:v1.0.0
                 '''
             }
         }
     }
+
     post {
+
+        success {
+            emailext(
+                subject: "Jenkins Build SUCCESS",
+                body: "Pipeline executed successfully.",
+                to: "saisukhesh09123@gmail.com"
+            )
+        }
+
+        failure {
+            emailext(
+                subject: "Jenkins Build FAILED",
+                body: "Pipeline execution FAILED. Check Jenkins logs.",
+                to: "saisukhesh09123@gmail.com"
+            )
+        }
+
         always {
-            emailext attachLog: true,
-                subject: "'${currentBuild.result}'",
-                body: "Project: ${env.JOB_NAME}<br/>" +
-                      "Build Number: ${env.BUILD_NUMBER}<br/>" +
-                      "URL: ${env.BUILD_URL}<br/>",
-                to: 'kastrokiran@gmail.com',
-                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
+            echo "Pipeline finished."
         }
     }
 }
+
